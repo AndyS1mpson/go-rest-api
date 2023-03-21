@@ -4,7 +4,7 @@ import (
 	"flag"
 	"log"
 
-	"github.com/AndyS1mpson/go-rest-api.git/internal/app/apiserver"
+	"github.com/AndyS1mpson/go-rest-api/internal/app/apiserver"
 	"github.com/BurntSushi/toml"
 )
 
