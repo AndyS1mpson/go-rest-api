@@ -6,8 +6,8 @@ build:
 test:
 	go test -v -race -timeout 30s ./...
 
-.PHONY: run_db
-run_db:
+.PHONY: db
+db:
 	docker-compose -f deployments/docker-compose.yaml up --build
 
 .DEFAULT_GOAL := build
