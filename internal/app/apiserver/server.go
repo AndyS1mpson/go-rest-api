@@ -74,6 +74,7 @@ func (s *server) setRequestID(next http.Handler) http.Handler {
 	})
 }
 
+
 func (s *server) logRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger := s.logger.WithFields(logrus.Fields{
@@ -83,11 +84,17 @@ func (s *server) logRequest(next http.Handler) http.Handler {
 		logger.Info("started %s %s", r.Method, r.RequestURI)
 
 		start := time.Now()
-		next.ServeHTTP(w, r)
+		rw := &responseWriter{w, http.StatusOK}
+		next.ServeHTTP(rw, r)
 
-		logger.Infof("completed in %v", time.Now().Sub(start))
+		logger.Infof(
+			"completed with %d %s in %v",
+			rw.code,
+			http.StatusText(rw.code),
+			time.Now().Sub(start),
+		)
 	})
-}
+	}
 
 
 func (s *server) handleWhoami() http.HandlerFunc {
