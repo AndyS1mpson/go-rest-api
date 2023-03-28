@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,26 +13,35 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+
 const (
 	sessionName = "simpleGoAPI"
+	ctxKeyUser ctxKey = iota
 )
+
 
 var (
 	errIncorrectEmailOrPassword = errors.New("incorrect email or password")
+	errNotAuthenticated = errors.New("not authenticated")
 )
 
+
+type ctxKey int8
+
+
 type server struct {
-	router *mux.Router
-	logger *logrus.Logger
-	store  store.Store
+	router       *mux.Router
+	logger       *logrus.Logger
+	store        store.Store
 	sessionStore sessions.Store
 }
 
+
 func newServer(store store.Store, sessionStore sessions.Store) *server {
 	s := &server{
-		router: mux.NewRouter(),
-		logger: logrus.New(),
-		store:  store,
+		router:       mux.NewRouter(),
+		logger:       logrus.New(),
+		store:        store,
 		sessionStore: sessionStore,
 	}
 
@@ -39,6 +49,7 @@ func newServer(store store.Store, sessionStore sessions.Store) *server {
 
 	return s
 }
+
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
@@ -48,6 +59,17 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *server) configureRouter() {
 	s.router.HandleFunc("/users", s.handleUsersCreate()).Methods("POST")
 	s.router.HandleFunc("/sessions", s.handleSessionsCreate()).Methods("POST")
+
+	private := s.router.PathPrefix("/private").Subrouter()
+	private.Use(s.authenticateUser)
+	private.HandleFunc("/whoami", s.handleWhoami()).Methods("GET")
+}
+
+
+func (s *server) handleWhoami() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.respond(w, r, http.StatusOK, r.Context().Value(ctxKeyUser).(*model.User))
+	}
 }
 
 
@@ -64,7 +86,7 @@ func (s *server) handleUsersCreate() http.HandlerFunc {
 		}
 
 		u := &model.User{
-			Email: req.Email,
+			Email:    req.Email,
 			Password: req.Password,
 		}
 		if err := s.store.User().Create(u); err != nil {
@@ -75,6 +97,30 @@ func (s *server) handleUsersCreate() http.HandlerFunc {
 		u.Sanitize()
 		s.respond(w, r, http.StatusCreated, u)
 	}
+}
+
+
+func (s *server) authenticateUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, err := s.sessionStore.Get(r, sessionName)
+		if err != nil {
+			s.error(w, r, http.StatusInternalServerError, err)
+		}
+
+		id, ok := session.Values["user_id"]
+		if !ok {
+			s.error(w, r, http.StatusUnauthorized, errNotAuthenticated)
+			return
+		}
+
+		u, err := s.store.User().Find(id.(int))
+		if err != nil {
+			s.error(w, r, http.StatusUnauthorized, errNotAuthenticated)
+			return
+		}
+
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, u)))
+	})
 }
 
 
@@ -91,7 +137,7 @@ func (s *server) handleSessionsCreate() http.HandlerFunc {
 		}
 
 		u, err := s.store.User().FindByEmail(req.Email)
-		if err != nil || !u.ComparePassword(req.Password){
+		if err != nil || !u.ComparePassword(req.Password) {
 			s.error(w, r, http.StatusUnauthorized, errIncorrectEmailOrPassword)
 			return
 		}
@@ -105,7 +151,7 @@ func (s *server) handleSessionsCreate() http.HandlerFunc {
 		session.Values["user_id"] = u.ID
 		if err := s.sessionStore.Save(r, w, session); err != nil {
 			s.error(w, r, http.StatusInternalServerError, err)
-			return	
+			return
 		}
 
 		s.respond(w, r, http.StatusOK, nil)
